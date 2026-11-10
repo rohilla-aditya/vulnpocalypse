@@ -66,7 +66,7 @@ def test_noise_from_real_headlines_is_rejected():
         row("Hackers leak 133m health records in AI-driven attack", "Hacker News"),
         row("OpenSSH flaw exposes servers to attack", "BleepingComputer"),
         row("OpenSSH Vulnerability Exposes Servers", "SecurityWeek"),
-        row("Exchange Loses 6.3B in 133M-Account Heist", "The Register"),
+        row("Exchange Loses 6.3B in 133M-Account Heist", "The Register", "The heist drained an exchange."),
         row("Heist: 6.3B gone, 133M accounts drained", "Wired"),
         row("23andMe Breach Widens", "TechCrunch"),
         row("23andMe says breach hit more users", "Ars Technica"),
