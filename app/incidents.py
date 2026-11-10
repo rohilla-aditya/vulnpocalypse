@@ -101,7 +101,8 @@ def _clean_token(tok: str) -> str:
 
 
 def _capitalised(tok: str) -> bool:
-    return tok[:1].isupper() or (tok[:1].isdigit() and any(c.isupper() for c in tok))
+    # Digit-led names need real letters behind them: 23andMe yes, 133M and 6.3B no.
+    return tok[:1].isupper() or (tok[:1].isdigit() and any(c.isupper() for c in tok) and sum(c.isalpha() for c in tok) >= 3)
 
 
 def _distinctive(tok: str) -> bool:
@@ -109,7 +110,7 @@ def _distinctive(tok: str) -> bool:
     if len(tok) < 3 or "-" in tok:
         return False
     inner_caps = any(c.isupper() for c in tok[1:]) and any(c.islower() for c in tok)
-    mixed_digits = any(c.isdigit() for c in tok) and any(c.isupper() for c in tok)
+    mixed_digits = any(c.isdigit() for c in tok) and any(c.isupper() for c in tok) and sum(c.isalpha() for c in tok) >= 3
     return inner_caps or mixed_digits or "&" in tok
 
 

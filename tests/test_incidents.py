@@ -66,11 +66,15 @@ def test_noise_from_real_headlines_is_rejected():
         row("Hackers leak 133m health records in AI-driven attack", "Hacker News"),
         row("OpenSSH flaw exposes servers to attack", "BleepingComputer"),
         row("OpenSSH Vulnerability Exposes Servers", "SecurityWeek"),
+        row("Exchange Loses 6.3B in 133M-Account Heist", "The Register"),
+        row("Heist: 6.3B gone, 133M accounts drained", "Wired"),
+        row("23andMe Breach Widens", "TechCrunch"),
+        row("23andMe says breach hit more users", "Ars Technica"),
         row("Crédit Mutuel confirms breach of customer data", "HackRead"),
         row("Crédit Mutuel Breach Hits Customers", "Security Affairs"),
     ]
     found = {i["title"] for i in incidents.detect(rows, [], NOW)}
-    assert found == {"Crédit Mutuel"}, found
+    assert found == {"Crédit Mutuel", "23andMe"}, found
 
 
 def test_aggregators_alone_do_not_make_an_incident():
