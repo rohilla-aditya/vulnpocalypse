@@ -16,7 +16,8 @@ TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 KEV = {
     "vulnerabilities": [
         {"cveID": "CVE-2026-0001", "vendorProject": "Acme", "product": "Router", "vulnerabilityName": "Acme Router RCE",
-         "dateAdded": TODAY, "shortDescription": "Bad <b>things</b>.", "dueDate": "2026-12-01", "knownRansomwareCampaignUse": "Known"},
+         "dateAdded": TODAY, "shortDescription": "Bad <b>things</b>.", "dueDate": "2026-12-01", "knownRansomwareCampaignUse": "Known",
+         "requiredAction": "Apply mitigations per vendor instructions or discontinue use of the product if mitigations are unavailable."},
         {"cveID": "CVE-2019-0002", "vendorProject": "Old", "product": "Thing", "vulnerabilityName": "Old bug",
          "dateAdded": "2021-11-03", "shortDescription": "x", "knownRansomwareCampaignUse": "Unknown"},
     ]
@@ -109,6 +110,11 @@ def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=SEC)
     if host == "infosec.exchange":
         return httpx.Response(200, json=FEDI)
+    if host == "raw.githubusercontent.com":
+        assert request.url.path.endswith(("/cves/2026/0xxx/CVE-2026-0001.json", "/cves/2019/0xxx/CVE-2019-0002.json"))
+        if "CVE-2026-0001" in request.url.path:
+            return httpx.Response(200, json={"containers": {"cna": {"affected": [{"versions": [{"version": "0", "lessThan": "2.4.1", "status": "affected"}]}]}}})
+        return httpx.Response(200, json={"containers": {"cna": {"descriptions": [{"value": "A buffer overflow in the Thing."}]}}})
     if host == "api.first.org":
         cves = request.url.params["cve"].split(",")
         return httpx.Response(200, json={"data": [{"cve": c, "epss": "0.9423" if c == "CVE-2026-0001" else "0.0004"} for c in cves]})
@@ -133,7 +139,7 @@ def test_kev():
     out = run(sources.fetch_kev(client()))
     first = out["items"][0]
     assert first["ref"] == "CVE-2026-0001" and first["sev"] == "critical"
-    assert "RANSOMWARE" in first["tags"] and "FIX BY 2026-12-01" in first["tags"]
+    assert "RANSOMWARE" in first["tags"] and "DEADLINE 2026-12-01" in first["tags"]
     assert "<" not in first["summary"] and first["summary"].startswith("Bad things")
     assert out["stats"] == {"kev_total": 2, "kev_ransomware": 1, "kev_30d": 1}
 
@@ -141,7 +147,7 @@ def test_kev():
 def test_nvd_skips_rejected_and_reads_score():
     out = run(sources.fetch_nvd(client()))
     assert [i["ref"] for i in out["items"]] == ["CVE-2026-9999"]
-    assert out["items"][0]["tags"] == ["CVSS 9.8"]
+    assert out["items"][0]["tags"] == ["CVSS 9.8", "PATCH UNKNOWN"]
     assert out["items"][0]["title"] == "Heap overflow in libfoo."
 
 
@@ -234,7 +240,7 @@ def test_feed_keeps_last_good_copy_when_a_source_dies(tmp_path, monkeypatch):
     f = Feed()
     run(f.refresh(client()))
     p = f.payload()
-    assert [t["key"] for t in p["tabs"]] == ["exploited", "cves", "advisories", "exploits", "pwned", "ransom", "wire", "chatter", "watchlist"]
+    assert [t["key"] for t in p["tabs"]] == ["exploited", "cves", "advisories", "exploits", "pwned", "ransom", "wire", "chatter", "attacks"]
     assert {i["ref"] for i in p["tabs"][1]["items"]} == {"CVE-2026-9999", "GHSA-aaaa-bbbb-cccc"}
     assert all(s["ok"] for s in p["sources"]), [s for s in p["sources"] if not s["ok"]]
     assert {i["source"] for i in p["tabs"][4]["items"]} == {"megacorp.example", "SEC EDGAR"}
@@ -243,6 +249,12 @@ def test_feed_keeps_last_good_copy_when_a_source_dies(tmp_path, monkeypatch):
     kev_rows = {i["ref"]: i for i in p["tabs"][0]["items"]}
     assert "EPSS 94%" in kev_rows["CVE-2026-0001"]["tags"]
     assert not any(t.startswith("EPSS") for t in kev_rows["CVE-2019-0002"]["tags"])
+    # Patch status: CISA's generic wording says nothing, so the CVE record decides.
+    assert kev_rows["CVE-2026-0001"]["fix"] == "patched" and "PATCH AVAILABLE" in kev_rows["CVE-2026-0001"]["tags"]
+    assert kev_rows["CVE-2019-0002"]["fix"] == "unknown" and "PATCH UNKNOWN" in kev_rows["CVE-2019-0002"]["tags"]
+    cves = {i["ref"]: i for i in p["tabs"][1]["items"]}
+    assert cves["GHSA-aaaa-bbbb-cccc"]["fix"] == "open"  # no first_patched_version
+    assert p["stats"]["fix_patched"] + p["stats"]["fix_open"] + p["stats"]["fix_unknown"] == 4
     wire = next(s for s in p["sources"] if s["key"] == "wire")
     assert wire["failed"] == ["Krebs on Security (HTTP 503)"]
 
@@ -262,33 +274,26 @@ def test_feed_keeps_last_good_copy_when_a_source_dies(tmp_path, monkeypatch):
     json.dumps(g.payload())
 
 
-def test_watchlist_matches_whole_words_and_reads_the_config(tmp_path):
-    cfg = tmp_path / "watchlist.json"
-    cfg.write_text(json.dumps([{"name": "fire base!", "match": ["Firebase", "firestore"]}, {"name": "", "match": ["x"]}, "junk"]))
-    wl = sources.load_watchlist(cfg)
-    assert [(name, terms) for name, terms, _ in wl] == [("FIREBASE", ("firebase", "firestore"))]
-    assert sources.watch_topics({"title": "Misconfigured Firebase leaks 2M users"}, wl) == ["FIREBASE"]
-    assert sources.watch_topics({"title": "x", "summary": "open Firestore rules"}, wl) == ["FIREBASE"]
-    assert sources.watch_topics({"title": "Campfirebase camping gear"}, wl) == []
-    assert sources.load_watchlist(tmp_path / "missing.json") == []
-    assert sources.WATCHLIST, "the shipped watchlist.json must load"
+def test_patch_status_from_text_and_records():
+    f = sources.fix_from_text
+    assert f("Fixed in version 2.4.1.") == "patched"
+    assert f("Versions prior to 3.2 are affected.") == "patched"
+    assert f("Apply updates per vendor instructions.") == "patched"
+    assert f("The product is end-of-life; upgrade to a supported model.") == "open"  # no-fix wording wins
+    assert f("There is no patch available at this time.") == "open"
+    assert f("A heap overflow allows remote code execution.") == "unknown"
+    rec = sources.fix_from_cve_record
+    assert rec({"containers": {"cna": {"affected": [{"versions": [{"version": "1.0", "status": "affected"}]}]}}}) == "unknown"
+    assert rec({"containers": {"cna": {"affected": [{"versions": [{"version": "0", "lessThan": "1.2", "status": "affected"}]}]}}}) == "patched"
+    assert rec({"containers": {"adp": [{"references": [{"url": "https://x.example", "tags": ["patch"]}]}]}}) == "patched"
+    assert rec({"containers": {"cna": {"descriptions": [{"value": "UNSUPPORTED WHEN ASSIGNED. Old router."}]}}}) == "open"
+    item = sources.set_fix(sources.set_fix({"tags": ["EXPLOITED"]}, "unknown"), "patched")
+    assert item["tags"] == ["EXPLOITED", "PATCH AVAILABLE"]
 
 
-def test_watchlist_tab_collects_rows_from_every_feed(tmp_path, monkeypatch):
-    from app import feed as feed_mod
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "cache_file", tmp_path / "cache.json")
-    wl = [("INITECH", ("initech",), sources.re.compile(r"(?<!\\w)initech(?!\\w)", sources.re.I))]
-    monkeypatch.setattr(sources, "WATCHLIST", wl)
-    monkeypatch.setattr(feed_mod, "WATCHLIST", wl)
-    f = Feed()
-    run(f.refresh(client()))
-    p = f.payload()
-    tab = p["tabs"][-1]
-    assert tab["key"] == "watchlist" and p["watchlist"] == ["INITECH"]
-    # The ransomware claim and the press headline both name the topic.
-    assert {i["id"].split(":")[0] for i in tab["items"]} == {"ransom", "rss"}
-    assert all(i["tags"][0] == "INITECH" for i in tab["items"])
-    # The original rows are not retagged.
-    assert all("INITECH" not in i["tags"] for i in p["tabs"][5]["items"])
+def test_nvd_patch_status_uses_reference_tags(monkeypatch):
+    assert run(sources.fetch_nvd(client()))["items"][0]["fix"] == "unknown"
+    nvd = json.loads(json.dumps(NVD))
+    nvd["vulnerabilities"][0]["cve"]["references"] = [{"url": "https://x.example/fix", "tags": ["Patch", "Vendor Advisory"]}]
+    monkeypatch.setitem(globals(), "NVD", nvd)
+    assert run(sources.fetch_nvd(client()))["items"][0]["fix"] == "patched"

@@ -15,7 +15,8 @@ from typing import Any
 import httpx
 
 from .config import settings
-from .sources import CVE_RE, SOURCES, _why, active_sources, fetch_epss, make_client, watch_topics, WATCHLIST
+from . import incidents
+from .sources import CVE_RE, SOURCES, _why, active_sources, fetch_epss, fetch_fix_status, make_client, set_fix
 
 log = logging.getLogger("vuln-pocalypse")
 
@@ -33,6 +34,11 @@ TABS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 # Sources whose rows carry a CVE id worth annotating with its EPSS score.
 EPSS_SOURCES = ("kev", "nvd", "ghsa")
+# Where incident headlines come from.
+INCIDENT_SOURCES = ("wire", "hn", "forums", "fedi")
+# CVE-record lookups per scrape for exploited CVEs whose patch status CISA's
+# text does not settle. Results are cached, so this only bounds the first runs.
+FIX_LOOKUPS_PER_RUN = 150
 SOURCE_TIMEOUT = 180  # seconds; one stuck upstream must not stall the whole scrape
 
 
@@ -77,6 +83,7 @@ class Feed:
                     if st["failed"]:
                         log.warning("source %s partial: %s", src.key, ", ".join(st["failed"]))
                 await self._annotate_epss(client)
+                await self._annotate_fix(client)
             finally:
                 if own:
                     await client.aclose()
@@ -100,6 +107,25 @@ class Feed:
                 item["tags"].append(f"EPSS {score:.0%}")
                 item["epss"] = round(score, 4)
         self._state["kev"]["stats"]["epss_scored"] = len(scores)
+
+    async def _annotate_fix(self, client: httpx.AsyncClient) -> None:
+        """Settle PATCH UNKNOWN on exploited CVEs from their CVE records. Best effort."""
+        kev = self._state["kev"]
+        cache: dict[str, str] = kev.setdefault("fixcache", {})
+        unknown = [i for i in kev["items"] if i.get("fix") == "unknown" and CVE_RE.fullmatch(i.get("ref", ""))]
+        todo = [i["ref"] for i in unknown if i["ref"] not in cache][:FIX_LOOKUPS_PER_RUN]
+        if todo:
+            try:
+                cache.update(await asyncio.wait_for(fetch_fix_status(client, todo), 90))
+            except Exception as exc:
+                log.warning("patch-status lookup skipped: %r", exc)
+        for item in unknown:
+            # A record that says nothing either way stays unknown; "open" needs explicit wording.
+            if cache.get(item["ref"]) in ("patched", "open"):
+                set_fix(item, cache[item["ref"]])
+        # Keep the cache to CVEs still on the page.
+        live = {i["ref"] for i in kev["items"]}
+        kev["fixcache"] = {k: v for k, v in cache.items() if k in live}
 
     async def run_forever(self) -> None:
         while True:
@@ -135,16 +161,12 @@ class Feed:
 
     # -- output ------------------------------------------------------------
 
-    def _watchlist(self, tabs: list[dict]) -> list[dict]:
-        """Every row, from any feed, that mentions a watched topic (watchlist.json)."""
-        picked: dict[str, dict] = {}
-        rows = [i for tab in tabs for i in tab["items"]] + self._state["watch"]["items"]
-        for item in rows:
-            topics = watch_topics(item)
-            if topics and item["id"] not in picked:
-                # A copy: the topic tags belong to this tab only.
-                picked[item["id"]] = {**item, "tags": topics + [t for t in item.get("tags", []) if t not in topics]}
-        return sorted(picked.values(), key=lambda i: i.get("ts", 0), reverse=True)
+    def _incidents(self) -> list[dict]:
+        """Attacks several sources are reporting right now. See incidents.py."""
+        rows = [i for k in INCIDENT_SOURCES for i in self._state[k]["items"]]
+        breach = [i for i in rows if "BREACH" in i.get("tags", [])]
+        vuln = [i for i in rows if "VULN" in i.get("tags", [])] + self._state["advisories"]["items"]
+        return incidents.detect(breach, vuln)
 
     def payload(self) -> dict:
         if self._payload is None:
@@ -156,14 +178,17 @@ class Feed:
                 items = [i for k in keys for i in self._state[k]["items"]]
                 items.sort(key=lambda i: i.get("ts", 0), reverse=True)
                 tabs.append({"key": key, "label": label, "items": items})
-            tabs.append({"key": "watchlist", "label": "WATCHLIST", "items": self._watchlist(tabs)})
+            tabs.append({"key": "attacks", "label": "ATTACKS IN THE NEWS", "items": self._incidents()})
+            vulns = [i for k in EPSS_SOURCES for i in self._state[k]["items"]]
+            stats["fix_open"] = sum(1 for i in vulns if i.get("fix") == "open")
+            stats["fix_patched"] = sum(1 for i in vulns if i.get("fix") == "patched")
+            stats["fix_unknown"] = sum(1 for i in vulns if i.get("fix") == "unknown")
             self._payload = {
                 "generated_at": self.generated_at,
                 "next_refresh_at": self.next_refresh_at,
                 "refresh_seconds": settings.refresh_seconds,
                 "stats": stats,
                 "tabs": tabs,
-                "watchlist": [name for name, _, _ in WATCHLIST],
                 "sources": [
                     {
                         "key": s.key,

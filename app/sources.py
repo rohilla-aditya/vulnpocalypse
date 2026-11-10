@@ -127,6 +127,85 @@ def _sev_from_score(score: object) -> str:
     return "critical" if s >= 9 else "high" if s >= 7 else "medium" if s >= 4 else "low"
 
 
+# Patch status of a vulnerability: is a fix published, or is it still open?
+#   patched  a fixed version, patch or update exists (not: everyone applied it)
+#   open     the source says there is no fix (unpatched, end-of-life, won't fix)
+#   unknown  the data does not say either way
+FIX_LABEL = {"patched": "PATCH AVAILABLE", "open": "NO PATCH", "unknown": "PATCH UNKNOWN"}
+
+_NOFIX_RE = re.compile(
+    r"\b(no (?:known |official |available )?(?:patch|fix|update)(?:es)?\b|unpatched|remains? unfixed|not (?:yet )?(?:been )?(?:fixed|patched)"
+    r"|end[- ]of[- ]life|\bEoL\b|no longer (?:supported|maintained)|unsupported when assigned|will not (?:be )?(?:fix|patch)\w*"
+    r"|won't (?:be )?(?:fix|patch)\w*|should be disconnected)",
+    re.I,
+)
+_FIXED_RE = re.compile(
+    r"\b(fixed in|patched in|addressed in|resolved in|remediated in|(?:is|was|has been|have been|been) (?:fixed|patched|addressed|resolved|remediated)"
+    r"|fix(?:es)? (?:is |are )?available|patch(?:es)? (?:is |are )?available|upgrade to|update to|updating to|upgrading to"
+    r"|apply (?:the )?(?:updates?|patch(?:es)?)|(?:prior to|before|earlier than|through|up to) (?:version )?v?\d|contains? a (?:fix|patch)|a fix (?:has been|was) released)",
+    re.I,
+)
+
+
+def fix_from_text(*texts: object) -> str:
+    """Best guess from prose. "No fix" wording wins over "fixed" wording."""
+    text = " ".join(t for t in texts if isinstance(t, str))
+    if _NOFIX_RE.search(text):
+        return "open"
+    if _FIXED_RE.search(text):
+        return "patched"
+    return "unknown"
+
+
+def set_fix(item: dict, status: str) -> dict:
+    """Record the patch status on a row and keep exactly one label for it."""
+    labels = set(FIX_LABEL.values())
+    item["fix"] = status
+    item["tags"] = [t for t in item.get("tags", []) if t not in labels] + [FIX_LABEL[status]]
+    return item
+
+
+def fix_from_cve_record(record: dict) -> str:
+    """Patch status from a CVE Program record (CVE JSON 5.x)."""
+    containers = record.get("containers") or {}
+    blocks = [containers.get("cna") or {}] + [a for a in containers.get("adp") or [] if isinstance(a, dict)]
+    texts = []
+    for block in blocks:
+        for product in block.get("affected") or []:
+            for version in (product or {}).get("versions") or []:
+                # "affected below X" or an explicitly unaffected release means a fixed version exists.
+                if isinstance(version, dict) and (version.get("lessThan") or version.get("status") == "unaffected"):
+                    return "patched"
+        for ref in block.get("references") or []:
+            if any(str(t).lower() in ("patch", "release-notes") for t in (ref or {}).get("tags") or []):
+                return "patched"
+        texts += [d.get("value", "") for d in (block.get("descriptions") or []) + (block.get("solutions") or []) if isinstance(d, dict)]
+        if block.get("solutions"):
+            texts.append("fix is available")
+    return fix_from_text(*texts)
+
+
+CVE_RECORD_URL = "https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/{year}/{bucket}xxx/{cve}.json"
+
+
+async def fetch_fix_status(client: httpx.AsyncClient, cves: list[str]) -> dict[str, str]:
+    """Look up CVE records (static files on GitHub) and read their patch status."""
+    gate = asyncio.Semaphore(8)
+
+    async def one(cve: str) -> tuple[str, str | None]:
+        _, year, number = cve.split("-")
+        url = CVE_RECORD_URL.format(year=year, bucket=int(number) // 1000, cve=cve)
+        try:
+            async with gate:
+                resp = await _get(client, url, timeout=15.0)
+            return cve, fix_from_cve_record(resp.json())
+        except Exception:
+            return cve, None  # try again next scrape
+
+    results = await asyncio.gather(*(one(c) for c in cves))
+    return {cve: status for cve, status in results if status}
+
+
 async def _get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
     resp = await client.get(url, **kwargs)
     resp.raise_for_status()
@@ -173,9 +252,13 @@ async def fetch_kev(client: httpx.AsyncClient) -> dict:
                 "url": f"https://nvd.nist.gov/vuln/detail/{cve}",
                 "summary": clean(v.get("shortDescription"), 320),
                 "source": f"{vendor} · {product}".strip(" ·"),
-                "tags": ["EXPLOITED"] + (["RANSOMWARE"] if ransomware else []) + ([f"FIX BY {due}"] if due else []),
+                "tags": ["EXPLOITED"] + (["RANSOMWARE"] if ransomware else []) + ([f"DEADLINE {due}"] if due else []),
             }
         )
+        # CISA's own wording settles some entries ("Apply updates...", "end-of-life");
+        # the rest are resolved from the CVE record after the scrape.
+        action = clean(v.get("requiredAction"), 400)
+        set_fix(items[-1], "open" if _NOFIX_RE.search(action) else fix_from_text(action, v.get("shortDescription")))
     items.sort(key=lambda i: i["ts"], reverse=True)
     return {
         "items": items[:120],
@@ -201,6 +284,21 @@ def _nvd_score(metrics: dict) -> float | None:
             if isinstance(score, (int, float)):
                 return float(score)
     return None
+
+
+def _nvd_fix(cve: dict, desc: str) -> str:
+    worded = fix_from_text(desc)
+    if worded == "open":
+        return "open"
+    for ref in cve.get("references") or []:
+        if "Patch" in ((ref or {}).get("tags") or []):
+            return "patched"
+    for config in cve.get("configurations") or []:
+        for node in (config or {}).get("nodes") or []:
+            for match in (node or {}).get("cpeMatch") or []:
+                if (match or {}).get("versionEndExcluding"):
+                    return "patched"
+    return worded
 
 
 async def _nvd_page(client: httpx.AsyncClient, severity: str, days: int) -> tuple[list[dict], int]:
@@ -243,6 +341,7 @@ async def _nvd_page(client: httpx.AsyncClient, severity: str, days: int) -> tupl
                 "tags": [f"CVSS {score:.1f}"] if score is not None else [],
             }
         )
+        set_fix(items[-1], _nvd_fix(cve, desc))
     items.sort(key=lambda i: i["ts"], reverse=True)
     return items, int(data.get("totalResults") or len(items))
 
@@ -300,6 +399,8 @@ async def fetch_ghsa(client: httpx.AsyncClient) -> dict:
                 label = f"{clean(pkg.get('ecosystem'), 20)}:{name}".lstrip(":")
                 if label not in pkgs:
                     pkgs.append(label)
+        fixes = [bool((v or {}).get("first_patched_version")) for v in a.get("vulnerabilities") or []]
+        fix = "patched" if fixes and any(fixes) else "open" if fixes else "unknown"
         score = (a.get("cvss") or {}).get("score")
         items.append(
             {
@@ -314,6 +415,7 @@ async def fetch_ghsa(client: httpx.AsyncClient) -> dict:
                 "tags": ([f"CVSS {float(score):.1f}"] if isinstance(score, (int, float)) and score else []) + ["OSS"],
             }
         )
+        set_fix(items[-1], fix)
     return {"items": items, "stats": {}}
 
 
@@ -822,95 +924,6 @@ async def fetch_epss(client: httpx.AsyncClient, cves: list[str]) -> dict[str, fl
 
 
 # --------------------------------------------------------------------------
-# Watchlist — topics to follow across every feed (watchlist.json). Each topic
-# is a name plus words to match; e.g. FIREBASE catches every row that mentions
-# Firebase, wherever it was scraped from, and pulls extra Hacker News stories
-# on it that the general queries would miss.
-# --------------------------------------------------------------------------
-
-WATCHLIST_FILE = Path(__file__).resolve().parent.parent / "watchlist.json"
-
-
-def load_watchlist(path: Path = WATCHLIST_FILE) -> list[tuple[str, tuple[str, ...], re.Pattern]]:
-    """[(NAME, terms, compiled matcher)]. A missing or broken file means no watchlist."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    topics = []
-    for entry in raw if isinstance(raw, list) else []:
-        if not isinstance(entry, dict):
-            continue
-        name = re.sub(r"[^A-Z0-9-]", "", str(entry.get("name", "")).upper())[:24]
-        terms = tuple(t.strip().lower() for t in entry.get("match") or [] if isinstance(t, str) and t.strip())[:20]
-        if name and terms:
-            pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(t) for t in terms) + r")(?!\w)", re.I)
-            topics.append((name, terms, pattern))
-    return topics[:40]
-
-
-WATCHLIST = load_watchlist()
-
-
-def watch_topics(item: dict, watchlist=None) -> list[str]:
-    """Names of the watchlist topics a row mentions."""
-    text = f"{item.get('title', '')} {item.get('summary', '')}"
-    return [name for name, _, pattern in (WATCHLIST if watchlist is None else watchlist) if pattern.search(text)]
-
-
-async def fetch_watch(client: httpx.AsyncClient) -> dict:
-    """Hacker News stories from the last 30 days about each watched topic."""
-    since = int(time.time()) - 30 * 86400
-    gate = asyncio.Semaphore(6)
-
-    async def one(term: str) -> list[dict]:
-        async with gate:
-            resp = await _get(
-                client,
-                HN_URL,
-                params={"query": f'"{term}"', "tags": "story", "hitsPerPage": 30, "numericFilters": f"created_at_i>{since},points>9"},
-            )
-        return resp.json().get("hits") or []
-
-    # One query per topic (its first term); the matcher below applies them all.
-    queries = [terms[0] for _, terms, _ in WATCHLIST]
-    if not queries:
-        return {"items": [], "stats": {}}
-    results = await asyncio.gather(*(one(q) for q in queries), return_exceptions=True)
-    if all(isinstance(r, BaseException) for r in results):
-        raise next(r for r in results if isinstance(r, BaseException))
-    seen: dict[str, dict] = {}
-    for hits in results:
-        if isinstance(hits, BaseException):
-            continue
-        for h in hits:
-            oid = clean(str(h.get("objectID") or ""), 20)
-            title = clean(h.get("title"), 200)
-            if not oid.isdigit() or not title or oid in seen:
-                continue
-            # Watched topics are broad product names, so a story also has to
-            # read like a security story to get in.
-            if not watch_topics({"title": title}) or not classify(title):
-                continue
-            points = h.get("points") if isinstance(h.get("points"), int) else 0
-            comments = h.get("num_comments") if isinstance(h.get("num_comments"), int) else 0
-            link = safe_url(h.get("url"))
-            seen[oid] = {
-                "id": f"hn:{oid}",
-                "ts": int(h.get("created_at_i") or 0),
-                "ref": f"▲ {points}",
-                "sev": "critical" if points >= 500 else "high" if points >= 150 else "medium" if points >= 40 else "low",
-                "title": title,
-                "url": f"https://news.ycombinator.com/item?id={oid}",
-                "summary": f"{comments} comments · {httpx.URL(link).host if link else 'news.ycombinator.com'}",
-                "source": "Hacker News",
-                "tags": [classify(title)],
-                "link": link,
-            }
-    return {"items": sorted(seen.values(), key=lambda i: i["ts"], reverse=True), "stats": {}}
-
-
-# --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
 
@@ -935,7 +948,6 @@ SOURCES: tuple[Source, ...] = (
     Source("hn", "Hacker News", "https://news.ycombinator.com/", fetch_hn),
     Source("forums", "Lobsters + Reddit", "https://lobste.rs/t/security", fetch_forums),
     Source("fedi", "infosec.exchange", "https://infosec.exchange/", fetch_fedi),
-    Source("watch", "Watchlist (HN, 30d)", "https://hn.algolia.com/", fetch_watch),
 )
 
 
