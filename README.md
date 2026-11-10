@@ -14,21 +14,26 @@ that just got hacked. Rescraped from public sources every hour.
 | `[6]` Ransom claims | ransomware.live: victims named on leak sites (attackers' claims, labelled unconfirmed, leak sites never linked) |
 | `[7]` Breach wire | 42 security outlets and vendor research blogs, filtered to breach and vulnerability headlines |
 | `[8]` Chatter | Hacker News, Lobsters, Reddit (netsec, cybersecurity, blueteamsec), infosec.exchange trending links |
-| `[9]` Watchlist | Every row from any feed that mentions a watched topic, plus 30 days of Hacker News stories on each |
+| `[9]` Attacks in the news | Detected automatically: a company or crew that two or more independent sources are reporting an attack on in the last 7 days, with a link to each story |
 
-### Watchlist: following a topic
+### Attacks in the news
 
-`watchlist.json` lists topics to follow: a named incident, a product, or a
-whole class of attack such as supply-chain compromises. To add one, add a line and push; the next hourly scrape
-picks it up:
+Nothing to configure. Each scrape, `app/incidents.py` pulls candidate names out
+of every breach headline (press, Hacker News, forums, fediverse), keeps the
+ones that several independent sources agree on, prefers the longest form of a
+name, and drops vendors that appear in patch news as often as breach news. It
+is a heuristic over headlines, not a language model, so expect the occasional
+odd row.
 
-```json
-{"name": "FIREWORKS", "match": ["fireworks", "fireworks ai", "fireworks.ai"]}
-```
+### Patch status
 
-`name` is the tag shown on matching rows. `match` is a list of words or
-phrases, matched case-insensitively as whole words against each row's title
-and summary. The first one is also searched on Hacker News.
+Every row in the two vulnerability tabs carries one of three labels:
+
+| Label | Meaning | Decided from |
+|---|---|---|
+| `PATCH AVAILABLE` | A fix has been published. It does not mean everyone has applied it. | NVD "Patch" references and fixed-version ranges, GitHub's first patched version, the CVE record, or wording such as "fixed in" |
+| `NO PATCH` | The source says there is no fix: unpatched, end-of-life, won't fix. | Explicit wording, or a GitHub advisory with no patched version |
+| `PATCH UNKNOWN` | The data does not say either way. Common for CVEs published in the last few days. | Nothing above matched |
 
 CVE rows are annotated with their EPSS score (FIRST.org's probability of
 exploitation in the next 30 days). The full lists live at the top of

@@ -119,6 +119,13 @@ button.link:hover, button.link:focus-visible { background: var(--fg); color: var
 .sev-medium .ref { color: var(--med); text-shadow: none; }
 .sev-low .ref { color: var(--low); }
 
+.tag.fix-patched { color: var(--fg); }
+.tag.fix-open { color: var(--bg); background: var(--crit); text-shadow: none; font-weight: 700; padding: 0 2px; }
+.tag.fix-unknown { color: var(--fg-dim); opacity: 0.75; }
+.tag.t-ATTACK, .tag.t-NEW { color: var(--crit); }
+.links { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.links a { text-decoration: underline dotted; text-underline-offset: 3px; }
+
 .boot, .empty { padding: 28px 0; }
 .cursor { animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }

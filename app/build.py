@@ -57,6 +57,10 @@ def main() -> None:
         for name in s["failed"]:
             print(f"           - down: {name}")
     print("stats:", json.dumps(payload["stats"], sort_keys=True))
+    attacks = next(t for t in payload["tabs"] if t["key"] == "attacks")["items"]
+    print(f"attacks in the news: {len(attacks)}")
+    for a in attacks[:40]:
+        print(f"   {a['ref']:>10}  {a['title']}  <- {', '.join(l['label'] for l in a['links'])}")
     print(f"wrote {out}/")
 
 

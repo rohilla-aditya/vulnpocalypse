@@ -14,6 +14,7 @@
     return n;
   };
 
+  const FIX_CLASS = { "PATCH AVAILABLE": "fix-patched", "NO PATCH": "fix-open", "PATCH UNKNOWN": "fix-unknown" };
   const state = { data: null, tab: "exploited", q: "", shown: PAGE };
 
   // ---- helpers ----------------------------------------------------------
@@ -61,7 +62,8 @@
       ["public exploits / 21d", human(count("exploits")), `${s.exploit_feeds_ok ?? "?"}/${s.exploit_feeds ?? "?"} feeds answering`, false],
       ["accounts pwned / 365d", human(s.accounts_365d), `${s.breaches_365d ?? "?"} breaches catalogued`, true],
       ["ransomware claims / 24h", human(s.ransom_claims_24h), "victims named on leak sites", true],
-      ["advisories / 21d", human(count("advisories")), `${s.advisory_feeds_ok ?? "?"}/${s.advisory_feeds ?? "?"} vendors + CERTs answering`, false],
+      ["no patch available", human(s.fix_open), `${human(s.fix_patched)} patched · ${human(s.fix_unknown)} unknown, of listed CVEs`, true],
+      ["attacks in the news", human(count("attacks")), "named by 2+ independent sources / 7d", true],
       ["breach headlines / 14d", human(count("wire")), `${s.wire_feeds_ok ?? "?"}/${s.wire_feeds ?? "?"} outlets answering`, false],
     ];
     const box = $("stats");
@@ -97,10 +99,22 @@
     body.append(link(item.title || "(untitled)", item.url, "headline"));
     if (item.summary) body.append(el("div", "summary", item.summary));
     const meta = el("div", "meta");
-    for (const t of item.tags || []) meta.append(el("span", `tag t-${String(t).split(" ")[0].replace(/[^A-Z]/g, "")}`, t));
+    for (const t of item.tags || []) {
+      const cls = FIX_CLASS[t] || `t-${String(t).split(" ")[0].replace(/[^A-Z]/g, "")}`;
+      meta.append(el("span", `tag ${cls}`, t));
+    }
     if (item.source && item.source !== item.ref) meta.append(el("span", null, item.source));
     if (item.link) meta.append(" → ", link("article", item.link));
     body.append(meta);
+    if (Array.isArray(item.links) && item.links.length) {
+      const srcs = el("div", "links");
+      srcs.append("reported by: ");
+      item.links.forEach((l, i) => {
+        if (i) srcs.append(" · ");
+        srcs.append(link(String(l.label || "source"), l.url));
+      });
+      body.append(srcs);
+    }
     r.append(body);
     return r;
   }
@@ -128,8 +142,8 @@
         ? "[ .... ] first scrape in progress, hang tight"
         : q
         ? `grep: no matches for '${state.q}' in ${tab.label.toLowerCase()}`
-        : tab.key === "watchlist"
-        ? `nothing on the watchlist right now. watching: ${(d.watchlist || []).join(", ").toLowerCase() || "(empty)"}`
+        : tab.key === "attacks"
+        ? "no incident is being reported by two or more sources right now. enjoy it while it lasts."
         : "[ WARN ] this feed returned nothing on the last scrape";
       const p = el("p", "dim empty", msg);
       if (!d.generated_at) p.append(el("span", "cursor", "█"));
