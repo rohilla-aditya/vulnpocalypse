@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import httpx
@@ -820,6 +822,95 @@ async def fetch_epss(client: httpx.AsyncClient, cves: list[str]) -> dict[str, fl
 
 
 # --------------------------------------------------------------------------
+# Watchlist — topics to follow across every feed (watchlist.json). Each topic
+# is a name plus words to match; e.g. FIREBASE catches every row that mentions
+# Firebase, wherever it was scraped from, and pulls extra Hacker News stories
+# on it that the general queries would miss.
+# --------------------------------------------------------------------------
+
+WATCHLIST_FILE = Path(__file__).resolve().parent.parent / "watchlist.json"
+
+
+def load_watchlist(path: Path = WATCHLIST_FILE) -> list[tuple[str, tuple[str, ...], re.Pattern]]:
+    """[(NAME, terms, compiled matcher)]. A missing or broken file means no watchlist."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    topics = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        name = re.sub(r"[^A-Z0-9-]", "", str(entry.get("name", "")).upper())[:24]
+        terms = tuple(t.strip().lower() for t in entry.get("match") or [] if isinstance(t, str) and t.strip())[:20]
+        if name and terms:
+            pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(t) for t in terms) + r")(?!\w)", re.I)
+            topics.append((name, terms, pattern))
+    return topics[:40]
+
+
+WATCHLIST = load_watchlist()
+
+
+def watch_topics(item: dict, watchlist=None) -> list[str]:
+    """Names of the watchlist topics a row mentions."""
+    text = f"{item.get('title', '')} {item.get('summary', '')}"
+    return [name for name, _, pattern in (WATCHLIST if watchlist is None else watchlist) if pattern.search(text)]
+
+
+async def fetch_watch(client: httpx.AsyncClient) -> dict:
+    """Hacker News stories from the last 30 days about each watched topic."""
+    since = int(time.time()) - 30 * 86400
+    gate = asyncio.Semaphore(6)
+
+    async def one(term: str) -> list[dict]:
+        async with gate:
+            resp = await _get(
+                client,
+                HN_URL,
+                params={"query": f'"{term}"', "tags": "story", "hitsPerPage": 30, "numericFilters": f"created_at_i>{since},points>9"},
+            )
+        return resp.json().get("hits") or []
+
+    # One query per topic (its first term); the matcher below applies them all.
+    queries = [terms[0] for _, terms, _ in WATCHLIST]
+    if not queries:
+        return {"items": [], "stats": {}}
+    results = await asyncio.gather(*(one(q) for q in queries), return_exceptions=True)
+    if all(isinstance(r, BaseException) for r in results):
+        raise next(r for r in results if isinstance(r, BaseException))
+    seen: dict[str, dict] = {}
+    for hits in results:
+        if isinstance(hits, BaseException):
+            continue
+        for h in hits:
+            oid = clean(str(h.get("objectID") or ""), 20)
+            title = clean(h.get("title"), 200)
+            if not oid.isdigit() or not title or oid in seen:
+                continue
+            # Watched topics are broad product names, so a story also has to
+            # read like a security story to get in.
+            if not watch_topics({"title": title}) or not classify(title):
+                continue
+            points = h.get("points") if isinstance(h.get("points"), int) else 0
+            comments = h.get("num_comments") if isinstance(h.get("num_comments"), int) else 0
+            link = safe_url(h.get("url"))
+            seen[oid] = {
+                "id": f"hn:{oid}",
+                "ts": int(h.get("created_at_i") or 0),
+                "ref": f"▲ {points}",
+                "sev": "critical" if points >= 500 else "high" if points >= 150 else "medium" if points >= 40 else "low",
+                "title": title,
+                "url": f"https://news.ycombinator.com/item?id={oid}",
+                "summary": f"{comments} comments · {httpx.URL(link).host if link else 'news.ycombinator.com'}",
+                "source": "Hacker News",
+                "tags": [classify(title)],
+                "link": link,
+            }
+    return {"items": sorted(seen.values(), key=lambda i: i["ts"], reverse=True), "stats": {}}
+
+
+# --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
 
@@ -844,6 +935,7 @@ SOURCES: tuple[Source, ...] = (
     Source("hn", "Hacker News", "https://news.ycombinator.com/", fetch_hn),
     Source("forums", "Lobsters + Reddit", "https://lobste.rs/t/security", fetch_forums),
     Source("fedi", "infosec.exchange", "https://infosec.exchange/", fetch_fedi),
+    Source("watch", "Watchlist (HN, 30d)", "https://hn.algolia.com/", fetch_watch),
 )
 
 

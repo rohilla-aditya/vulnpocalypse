@@ -234,11 +234,11 @@ def test_feed_keeps_last_good_copy_when_a_source_dies(tmp_path, monkeypatch):
     f = Feed()
     run(f.refresh(client()))
     p = f.payload()
-    assert [t["key"] for t in p["tabs"]] == ["exploited", "cves", "advisories", "exploits", "pwned", "ransom", "wire", "chatter"]
+    assert [t["key"] for t in p["tabs"]] == ["exploited", "cves", "advisories", "exploits", "pwned", "ransom", "wire", "chatter", "watchlist"]
     assert {i["ref"] for i in p["tabs"][1]["items"]} == {"CVE-2026-9999", "GHSA-aaaa-bbbb-cccc"}
     assert all(s["ok"] for s in p["sources"]), [s for s in p["sources"] if not s["ok"]]
     assert {i["source"] for i in p["tabs"][4]["items"]} == {"megacorp.example", "SEC EDGAR"}
-    assert all(t["items"] for t in p["tabs"])
+    assert all(t["items"] for t in p["tabs"][:8])
     # EPSS annotation: scored rows get a tag, negligible scores do not.
     kev_rows = {i["ref"]: i for i in p["tabs"][0]["items"]}
     assert "EPSS 94%" in kev_rows["CVE-2026-0001"]["tags"]
@@ -260,3 +260,35 @@ def test_feed_keeps_last_good_copy_when_a_source_dies(tmp_path, monkeypatch):
     g.load()
     assert g.payload()["tabs"][0]["items"][0]["ref"] == "CVE-2026-0001"
     json.dumps(g.payload())
+
+
+def test_watchlist_matches_whole_words_and_reads_the_config(tmp_path):
+    cfg = tmp_path / "watchlist.json"
+    cfg.write_text(json.dumps([{"name": "fire base!", "match": ["Firebase", "firestore"]}, {"name": "", "match": ["x"]}, "junk"]))
+    wl = sources.load_watchlist(cfg)
+    assert [(name, terms) for name, terms, _ in wl] == [("FIREBASE", ("firebase", "firestore"))]
+    assert sources.watch_topics({"title": "Misconfigured Firebase leaks 2M users"}, wl) == ["FIREBASE"]
+    assert sources.watch_topics({"title": "x", "summary": "open Firestore rules"}, wl) == ["FIREBASE"]
+    assert sources.watch_topics({"title": "Campfirebase camping gear"}, wl) == []
+    assert sources.load_watchlist(tmp_path / "missing.json") == []
+    assert sources.WATCHLIST, "the shipped watchlist.json must load"
+
+
+def test_watchlist_tab_collects_rows_from_every_feed(tmp_path, monkeypatch):
+    from app import feed as feed_mod
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cache_file", tmp_path / "cache.json")
+    wl = [("INITECH", ("initech",), sources.re.compile(r"(?<!\\w)initech(?!\\w)", sources.re.I))]
+    monkeypatch.setattr(sources, "WATCHLIST", wl)
+    monkeypatch.setattr(feed_mod, "WATCHLIST", wl)
+    f = Feed()
+    run(f.refresh(client()))
+    p = f.payload()
+    tab = p["tabs"][-1]
+    assert tab["key"] == "watchlist" and p["watchlist"] == ["INITECH"]
+    # The ransomware claim and the press headline both name the topic.
+    assert {i["id"].split(":")[0] for i in tab["items"]} == {"ransom", "rss"}
+    assert all(i["tags"][0] == "INITECH" for i in tab["items"])
+    # The original rows are not retagged.
+    assert all("INITECH" not in i["tags"] for i in p["tabs"][5]["items"])

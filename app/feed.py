@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from .config import settings
-from .sources import CVE_RE, SOURCES, _why, active_sources, fetch_epss, make_client
+from .sources import CVE_RE, SOURCES, _why, active_sources, fetch_epss, make_client, watch_topics, WATCHLIST
 
 log = logging.getLogger("vuln-pocalypse")
 
@@ -135,6 +135,17 @@ class Feed:
 
     # -- output ------------------------------------------------------------
 
+    def _watchlist(self, tabs: list[dict]) -> list[dict]:
+        """Every row, from any feed, that mentions a watched topic (watchlist.json)."""
+        picked: dict[str, dict] = {}
+        rows = [i for tab in tabs for i in tab["items"]] + self._state["watch"]["items"]
+        for item in rows:
+            topics = watch_topics(item)
+            if topics and item["id"] not in picked:
+                # A copy: the topic tags belong to this tab only.
+                picked[item["id"]] = {**item, "tags": topics + [t for t in item.get("tags", []) if t not in topics]}
+        return sorted(picked.values(), key=lambda i: i.get("ts", 0), reverse=True)
+
     def payload(self) -> dict:
         if self._payload is None:
             stats: dict[str, int] = {}
@@ -145,12 +156,14 @@ class Feed:
                 items = [i for k in keys for i in self._state[k]["items"]]
                 items.sort(key=lambda i: i.get("ts", 0), reverse=True)
                 tabs.append({"key": key, "label": label, "items": items})
+            tabs.append({"key": "watchlist", "label": "WATCHLIST", "items": self._watchlist(tabs)})
             self._payload = {
                 "generated_at": self.generated_at,
                 "next_refresh_at": self.next_refresh_at,
                 "refresh_seconds": settings.refresh_seconds,
                 "stats": stats,
                 "tabs": tabs,
+                "watchlist": [name for name, _, _ in WATCHLIST],
                 "sources": [
                     {
                         "key": s.key,

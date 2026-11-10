@@ -14,12 +14,27 @@ that just got hacked. Rescraped from public sources every hour.
 | `[6]` Ransom claims | ransomware.live: victims named on leak sites (attackers' claims, labelled unconfirmed, leak sites never linked) |
 | `[7]` Breach wire | 42 security outlets and vendor research blogs, filtered to breach and vulnerability headlines |
 | `[8]` Chatter | Hacker News, Lobsters, Reddit (netsec, cybersecurity, blueteamsec), infosec.exchange trending links |
+| `[9]` Watchlist | Every row from any feed that mentions a watched topic, plus 30 days of Hacker News stories on each |
+
+### Watchlist: following a topic
+
+`watchlist.json` lists topics to follow: a named incident, a product, or a
+whole class of attack such as supply-chain compromises. To add one, add a line and push; the next hourly scrape
+picks it up:
+
+```json
+{"name": "FIREWORKS", "match": ["fireworks", "fireworks ai", "fireworks.ai"]}
+```
+
+`name` is the tag shown on matching rows. `match` is a list of words or
+phrases, matched case-insensitively as whole words against each row's title
+and summary. The first one is also searched on Hacker News.
 
 CVE rows are annotated with their EPSS score (FIRST.org's probability of
 exploitation in the next 30 days). The full lists live at the top of
 `app/sources.py`.
 
-Keys: `1`-`8` switch feed, `/` grep (searches every feed), `p` toggles green/amber phosphor, `esc` clears.
+Keys: `1`-`9` switch feed, `/` grep (searches every feed), `p` toggles green/amber phosphor, `esc` clears.
 
 ## Run it
 
