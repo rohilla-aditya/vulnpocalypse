@@ -58,6 +58,21 @@ def test_filters():
     assert incidents.detect([], [], NOW) == []
 
 
+def test_noise_from_real_headlines_is_rejected():
+    rows = [
+        row("Refrigeration Systems Maker Hit, Critical Infrastructure at Risk", "Unit 42", "Attackers hit critical infrastructure and email systems."),
+        row("Critical Infrastructure Email Systems Targeted in 9th Attack", "Infosecurity Magazine"),
+        row("133m Records Leaked as AI-Driven Attack Hits Health Systems", "HIPAA Journal", "The health settlement covers 133m people."),
+        row("Hackers leak 133m health records in AI-driven attack", "Hacker News"),
+        row("OpenSSH flaw exposes servers to attack", "BleepingComputer"),
+        row("OpenSSH Vulnerability Exposes Servers", "SecurityWeek"),
+        row("Crédit Mutuel confirms breach of customer data", "HackRead"),
+        row("Crédit Mutuel Breach Hits Customers", "Security Affairs"),
+    ]
+    found = {i["title"] for i in incidents.detect(rows, [], NOW)}
+    assert found == {"Crédit Mutuel"}, found
+
+
 def test_aggregators_alone_do_not_make_an_incident():
     rows = [row("Globex breach megathread", "Hacker News", "People at Globex are upset."), row("Globex breach discussion", "Reddit")]
     assert incidents.detect(rows, [], NOW) == []

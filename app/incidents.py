@@ -7,14 +7,15 @@ victim (or the crew behind it), who is reporting it, and links to each story.
 
 It is a heuristic, not a language model:
 
-1. Pull candidate names out of each headline: runs of capitalised words.
-2. Keep only words that are also capitalised in the middle of ordinary
-   prose somewhere in the corpus (summaries, sentence-case headlines). That is
-   what separates "Initech" from "Confirms" in a Title Case Headline.
-3. Count distinct sources per name; a name needs MIN_SOURCES of them.
-4. Prefer the longest name with the same backing ("Jaguar Land Rover" over
-   "Jaguar"), and drop names that show up at least as often in vulnerability
-   stories, which are vendors and products rather than victims.
+1. Only headlines about an attack count; ones about a flaw or a patch do not.
+2. Candidate names are runs of capitalised words. Each needs an "anchor": a
+   word that never appears in lower case anywhere in the scraped text, or is
+   spelled like a name (PowerSchool, 23andMe). That is what separates
+   "Initech" from "Systems" in a Title Case Headline.
+3. A name must be in the headlines of MIN_SOURCES sources, one a real outlet.
+4. The longest form wins ("Jaguar Land Rover" over "Jaguar"), and names that
+   show up in vulnerability stories at least as often are dropped: those are
+   vendors and products, not victims.
 """
 
 from __future__ import annotations
@@ -28,7 +29,11 @@ WINDOW_DAYS = 7
 MAX_NGRAM = 4
 MAX_INCIDENTS = 60
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9&.+'’-]*")
+_TOKEN_RE = re.compile(r"[^\W_][\w&.+'’-]*")
+# A headline about a weakness rather than about someone getting hit.
+_VULN_STORY_RE = re.compile(
+    r"\b(CVE-\d{4}-\d+|vulnerabilit\w+|flaws?|bugs?|patch\w*|zero[- ]days?|0-?days?|exploit\w*|RCE|PoC|advisor(?:y|ies)|update[sd]?)\b", re.I
+)
 _SENTENCE_END = (".", "!", "?", ":", ";", "—", "–", "|", '"', "”", "“", "(", "-")
 _CONNECT = {"of", "&"}
 
@@ -61,6 +66,25 @@ STOP = set(
     how why what when who where the a an this that these those and or but for from with after over into amid via
     inc ltd llc corp co group company companies firm firms giant maker provider vendor vendors bank banks hospital
     hospitals university school schools city county airport airline airlines retailer insurer
+    threat threats intelligence research researchers labs lab team teams unit talos mandiant advisory alert alerts
+    critical infrastructure system systems service services network networks server servers email emails mobile
+    app apps software hardware device devices platform platforms tool tools code source open public private key keys
+    agent agents model models operation operations campaign campaigns scam scams fraud alleged allegedly breaking
+    exclusive updated live watch inside behind top best first last latest more less big major massive global national
+    health healthcare medical financial energy retail education tech technology technologies digital online
+    settlement lawsuit class action fine fined ransom extortion incident incidents notification notice
+    hit hits says said say warns warn warned confirms confirm confirmed admits admit discloses disclose disclosed
+    reveals reveal revealed halts halt halted probes probe investigates investigating investigation suffers suffer
+    suffered faces face blames blame denies deny claims claim claimed targets target targeted targeting steals steal
+    stole breached disrupts disrupt disrupted shuts shut forces force forced takes take took impacts impact impacted
+    affects affect affected exposing leaking hitting linked tied behind arrested arrest charged sentenced pleads
+    guilty seized seizes takedown down offline outage restores resumes recovers pays paid refuses demands demand
+    notifies notifying begins starts ends continues extends expands grows rises surges drops falls jumps
+    another again still now today yesterday here there after before during amid following despite
+    production customer employee employees staff student students patient patients people personal information
+    details numbers passwords credentials files documents records database databases servers website websites
+    thousands millions hundreds dozens several multiple many nearly almost about around
+    gang gangs crew actor actors nation-state state-sponsored hacktivist hacktivists criminals cybercriminals
     """.split()
 )
 
@@ -77,62 +101,73 @@ def _clean_token(tok: str) -> str:
 
 
 def _capitalised(tok: str) -> bool:
-    return tok[:1].isupper() or (tok[:1].isdigit() and any(c.isalpha() for c in tok))
+    return tok[:1].isupper() or (tok[:1].isdigit() and any(c.isupper() for c in tok))
 
 
 def _distinctive(tok: str) -> bool:
     """Reads as a name on spelling alone: PowerSchool, 23andMe, AT&T."""
-    if len(tok) < 3:
+    if len(tok) < 3 or "-" in tok:
         return False
     inner_caps = any(c.isupper() for c in tok[1:]) and any(c.islower() for c in tok)
-    mixed_digits = any(c.isdigit() for c in tok) and any(c.isalpha() for c in tok)
+    mixed_digits = any(c.isdigit() for c in tok) and any(c.isupper() for c in tok)
     return inner_caps or mixed_digits or "&" in tok
 
 
 def _is_title_case(words: list[str]) -> bool:
     long_words = [w for w in words if len(w) > 3 and w[0].isalpha()]
     if len(long_words) < 3:
-        return True  # too short to tell: treat as unreliable
+        return True  # too short to tell: treat capitalisation as unreliable
     return sum(1 for w in long_words if w[0].isupper()) / len(long_words) >= 0.6
 
 
-def _proper_nouns(texts: list[str]) -> set[str]:
-    """Lower-cased words seen capitalised mid-sentence in ordinary prose."""
-    proper: set[str] = set()
+def _vocabulary(texts: list[str]) -> set[str]:
+    """Every word seen written in lower case: ordinary words, not names."""
+    vocab: set[str] = set()
     for text in texts:
-        words = text.split()
-        if _is_title_case(words):
-            continue
-        for prev, word in zip(words, words[1:]):
-            if prev.endswith(_SENTENCE_END):
-                continue
-            tok = _clean_token(word)
-            if tok and tok[0].isupper() and _TOKEN_RE.fullmatch(tok):
-                proper.add(tok.lower())
-    return proper
+        for tok in _TOKEN_RE.findall(text):
+            tok = _clean_token(tok)
+            if tok[:1].islower():
+                vocab.add(tok)
+                vocab.update(part for part in tok.split("-") if part)
+    return vocab
 
 
-def _candidates(title: str, proper: set[str]) -> set[tuple[str, ...]]:
+def _common(word: str, vocab: set[str]) -> bool:
+    """An ordinary word: stop-listed, or seen in lower case, in this or a simpler inflection."""
+    forms = {word}
+    for suffix in ("s", "es", "ed", "d", "ing", "ly", "er", "ers"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            stem = word[: -len(suffix)]
+            forms.update({stem, stem + "e"})
+    return any(f in STOP or f in vocab for f in forms)
+
+
+def _candidates(title: str, vocab: set[str]) -> set[tuple[str, ...]]:
     """Name n-grams found in one headline."""
-    tokens = [_clean_token(t) for t in _TOKEN_RE.findall(title)]
-    tokens = [t for t in tokens if t]
+    tokens = [t for t in (_clean_token(t) for t in _TOKEN_RE.findall(title)) if t]
+    sentence_case = not _is_title_case(title.split())
 
-    def is_name(i: int) -> bool:
-        tok = tokens[i]
+    def anchor(tok: str) -> bool:
         low = tok.lower()
-        if low in STOP or not _capitalised(tok) or len(tok) < 2:
+        if low in STOP or len(tok) < 2 or not _capitalised(tok):
             return False
         if _distinctive(tok):
             return True
-        return low in proper
+        return not any(_common(part, vocab) for part in low.split("-"))
 
-    runs: list[list[str]] = []
-    run: list[str] = []
+    def soft(i: int) -> bool:
+        # Mid-sentence capitals mean something only when the headline is not Title Case.
+        tok = tokens[i]
+        return sentence_case and i > 0 and _capitalised(tok) and tok.lower() not in STOP and len(tok) > 1
+
+    runs: list[list[tuple[str, bool]]] = []
+    run: list[tuple[str, bool]] = []
     for i, tok in enumerate(tokens):
-        if is_name(i):
-            run.append(tok)
-        elif run and tok.lower() in _CONNECT and i + 1 < len(tokens) and is_name(i + 1):
-            run.append(tok)
+        is_anchor = anchor(tok)
+        if is_anchor or soft(i):
+            run.append((tok, is_anchor))
+        elif run and tok.lower() in _CONNECT and i + 1 < len(tokens) and (anchor(tokens[i + 1]) or soft(i + 1)):
+            run.append((tok, False))
         else:
             if run:
                 runs.append(run)
@@ -145,9 +180,10 @@ def _candidates(title: str, proper: set[str]) -> set[tuple[str, ...]]:
         for n in range(1, min(MAX_NGRAM, len(run)) + 1):
             for start in range(len(run) - n + 1):
                 gram = run[start : start + n]
-                if gram[0].lower() in _CONNECT or gram[-1].lower() in _CONNECT:
+                if gram[0][0].lower() in _CONNECT or gram[-1][0].lower() in _CONNECT:
                     continue
-                grams.add(tuple(g.lower() for g in gram))
+                if any(is_anchor for _, is_anchor in gram):
+                    grams.add(tuple(tok.lower() for tok, _ in gram))
     return grams
 
 
@@ -160,47 +196,61 @@ def _origin(item: dict) -> str:
     return str(item.get("source", "")).split(" · ")[0]
 
 
-def detect(breach_rows: list[dict], vuln_rows: list[dict], now: float | None = None) -> list[dict]:
+def _matcher(gram: tuple[str, ...]) -> re.Pattern:
+    return re.compile(r"(?<!\w)" + r"\W+".join(re.escape(g) for g in gram) + r"(?!\w)", re.I)
+
+
+def detect(
+    breach_rows: list[dict], vuln_rows: list[dict], now: float | None = None, extra_texts: tuple[str, ...] | list[str] = ()
+) -> list[dict]:
     """Rows for the incidents tab, newest report first."""
     now = now or time.time()
     cutoff = now - WINDOW_DAYS * 86400
-    rows = [r for r in breach_rows if r.get("ts", 0) >= cutoff and r.get("title")]
+    everything = breach_rows + vuln_rows
+    # A "breach" headline that is really about a flaw belongs with the vulnerability stories.
+    attack_rows = [r for r in breach_rows if r.get("title") and not _VULN_STORY_RE.search(r["title"])]
+    vuln_titles = [r.get("title", "") for r in everything if r not in attack_rows]
+    rows = [r for r in attack_rows if r.get("ts", 0) >= cutoff]
     if not rows:
         return []
 
-    prose = [r.get("summary", "") for r in breach_rows + vuln_rows] + [r.get("title", "") for r in breach_rows + vuln_rows]
-    proper = _proper_nouns([p for p in prose if p])
+    # The more ordinary prose the vocabulary is built from, the fewer ordinary words pass as names.
+    vocab = _vocabulary(
+        [r.get("title", "") for r in everything] + [r.get("summary", "") for r in everything] + list(extra_texts)
+    )
+    grams = {g for row in rows for g in _candidates(row["title"], vocab)}
 
-    mentions: dict[tuple[str, ...], list[dict]] = defaultdict(list)
+    # A name's backing is every headline that contains it, however it was capitalised there.
+    mentions: dict[tuple[str, ...], list[dict]] = {}
     spelling: dict[tuple[str, ...], Counter] = defaultdict(Counter)
-    for row in rows:
-        title = row["title"]
-        for gram in _candidates(title, proper):
-            mentions[gram].append(row)
-            match = re.search(r"(?<!\w)" + r"\W+".join(re.escape(g) for g in gram) + r"(?!\w)", title, re.I)
+    for gram in grams:
+        pattern = _matcher(gram)
+        hits = []
+        for row in rows:
+            match = pattern.search(row["title"])
             if match:
+                hits.append(row)
                 spelling[gram][match.group(0)] += 1
-
-    def press(gram: tuple[str, ...]) -> set[str]:
-        return {_origin(r) for r in mentions[gram] if _origin(r) not in _AGGREGATORS}
+        mentions[gram] = hits
 
     def backing(gram: tuple[str, ...]) -> set[str]:
         return {_origin(r) for r in mentions[gram]}
 
+    def press(gram: tuple[str, ...]) -> set[str]:
+        return backing(gram) - set(_AGGREGATORS)
+
     # Enough sources, and at least one of them an actual outlet.
-    kept = [g for g in mentions if len(backing(g)) >= MIN_SOURCES and press(g)]
+    kept = [g for g in grams if len(backing(g)) >= MIN_SOURCES and press(g)]
 
-    # Vendors and products appear in patch stories at least as often as in breach stories.
-    vuln_titles = [v.get("title", "").lower() for v in vuln_rows]
-
+    # Vendors and products appear in patch stories at least as often as in attack stories.
     def vuln_hits(gram: tuple[str, ...]) -> int:
-        pattern = re.compile(r"(?<!\w)" + r"\W+".join(re.escape(g) for g in gram) + r"(?!\w)")
+        pattern = _matcher(gram)
         return sum(1 for t in vuln_titles if pattern.search(t))
 
     kept = [g for g in kept if vuln_hits(g) < len(mentions[g])]
 
     # Longest name wins when it has most of the same backing.
-    kept.sort(key=lambda g: (-len(g), -len(backing(g))))
+    kept.sort(key=lambda g: (-len(g), -len(backing(g)), g))
     final: list[tuple[str, ...]] = []
     for gram in kept:
         if any(_contains(big, gram) and len(backing(big)) >= 0.6 * len(backing(gram)) for big in final):
@@ -213,10 +263,10 @@ def detect(breach_rows: list[dict], vuln_rows: list[dict], now: float | None = N
         by_stories[frozenset(r["id"] for r in mentions[gram])].append(gram)
 
     out = []
-    for grams in by_stories.values():
-        gram = grams[0]
+    for grams_ in by_stories.values():
+        gram = grams_[0]
         stories = sorted(mentions[gram], key=lambda r: r.get("ts", 0), reverse=True)
-        names = [spelling[g].most_common(1)[0][0] if spelling[g] else " ".join(g).title() for g in grams[:3]]
+        names = [spelling[g].most_common(1)[0][0] for g in grams_[:3]]
         sources = sorted(backing(gram))
         latest, first = stories[0], stories[-1]
         # One link per source, newest story from each.
@@ -233,7 +283,7 @@ def detect(breach_rows: list[dict], vuln_rows: list[dict], now: float | None = N
             tags.append("NEW")
         out.append(
             {
-                "id": "incident:" + "+".join(" ".join(g) for g in grams),
+                "id": "incident:" + "+".join(" ".join(g) for g in grams_),
                 "ts": latest.get("ts", 0),
                 "ref": f"{n} sources",
                 "sev": "critical" if n >= 6 else "high" if n >= 3 else "medium",

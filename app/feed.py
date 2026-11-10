@@ -166,7 +166,9 @@ class Feed:
         rows = [i for k in INCIDENT_SOURCES for i in self._state[k]["items"]]
         breach = [i for i in rows if "BREACH" in i.get("tags", [])]
         vuln = [i for i in rows if "VULN" in i.get("tags", [])] + self._state["advisories"]["items"]
-        return incidents.detect(breach, vuln)
+        # Every other scraped sentence helps tell ordinary words from names.
+        prose = [i.get(f, "") for st in self._state.values() for i in st["items"] for f in ("title", "summary")]
+        return incidents.detect(breach, vuln, extra_texts=prose)
 
     def payload(self) -> dict:
         if self._payload is None:
