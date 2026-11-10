@@ -128,6 +128,8 @@
         ? "[ .... ] first scrape in progress, hang tight"
         : q
         ? `grep: no matches for '${state.q}' in ${tab.label.toLowerCase()}`
+        : tab.key === "watchlist"
+        ? `nothing on the watchlist right now. watching: ${(d.watchlist || []).join(", ").toLowerCase() || "(empty)"}`
         : "[ WARN ] this feed returned nothing on the last scrape";
       const p = el("p", "dim empty", msg);
       if (!d.generated_at) p.append(el("span", "cursor", "█"));

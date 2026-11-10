@@ -1,0 +1,10 @@
+[
+  {"name": "FIREWORKS", "match": ["fireworks", "fireworks ai", "fireworks.ai"]},
+  {"name": "FIREBASE", "match": ["firebase", "firestore"]},
+  {"name": "SUPABASE", "match": ["supabase"]},
+  {"name": "OPEN-BUCKET", "match": ["s3 bucket", "open bucket", "exposed bucket", "misconfigured bucket", "azure blob", "exposed database", "unsecured database", "elasticsearch"]},
+  {"name": "SUPPLY-CHAIN", "match": ["supply chain", "supply-chain", "npm package", "npm packages", "pypi", "malicious package", "typosquat", "typosquatting"]},
+  {"name": "AI", "match": ["prompt injection", "llm", "mcp server", "chatgpt", "openai", "anthropic", "copilot", "ai agent", "ai agents"]},
+  {"name": "CRYPTO-HEIST", "match": ["crypto heist", "crypto exchange", "defi", "wallet drainer", "bridge exploit"]},
+  {"name": "VIBE-CODED", "match": ["vibe coded", "vibe-coded", "vibe coding", "lovable", "replit", "exposed api key", "api keys exposed", "leaked api key"]}
+]
