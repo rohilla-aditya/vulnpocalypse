@@ -1,0 +1,59 @@
+# Publishes the dashboard to GitHub Pages and rescrapes it every hour.
+#
+# One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
+name: pages
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # hourly, off the top of the hour where Actions is busiest
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - id: pages
+        uses: actions/configure-pages@v5
+      # Last good scrape, so a source that is down this hour keeps its rows.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: vuln-pocalypse-feed-${{ github.run_id }}
+          restore-keys: vuln-pocalypse-feed-
+      - name: Scrape and build
+        env:
+          PUBLIC_URL: ${{ steps.pages.outputs.base_url }}
+          VULN_CACHE_FILE: .cache/feed.json
+          GITHUB_TOKEN: ${{ github.token }}   # raises the GitHub Advisories rate limit
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # optional
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}   # optional repo variable; enables SEC 8-K filings
+        run: |
+          mkdir -p .cache
+          python -m app.build dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-phosphor="green">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VULN-POCALYPSE NOW // everything is on fire, refreshed hourly</title>
+<meta name="description" content="Live terminal of exploited-in-the-wild vulnerabilities, fresh critical CVEs and companies that just got hacked. Scraped hourly from 90+ public sources: CISA KEV, NVD, EPSS, vendor advisories, Exploit-DB, Have I Been Pwned, SEC filings, ransomware leak-site trackers, the security press and Hacker News.">
+<meta name="theme-color" content="#050805">
+<link rel="canonical" href="__BASE_URL__/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="VULN-POCALYPSE NOW">
+<meta property="og:title" content="VULN-POCALYPSE NOW // everything is on fire">
+<meta property="og:description" content="Exploited-in-the-wild vulns, fresh critical CVEs and who just got hacked. One terminal, refreshed hourly.">
+<meta property="og:url" content="__BASE_URL__/">
+<meta property="og:image" content="__BASE_URL__/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="VULN-POCALYPSE NOW // everything is on fire">
+<meta name="twitter:description" content="Exploited-in-the-wild vulns, fresh critical CVEs and who just got hacked. One terminal, refreshed hourly.">
+<meta name="twitter:image" content="__BASE_URL__/og.png">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="crt" aria-hidden="true"></div>
+<main class="term">
+  <header>
+    <pre class="banner" aria-hidden="true">
+██╗   ██╗██╗   ██╗██╗     ███╗   ██╗      ██████╗  ██████╗  ██████╗ █████╗ ██╗  ██╗   ██╗██████╗ ███████╗███████╗
+██║   ██║██║   ██║██║     ████╗  ██║      ██╔══██╗██╔═══██╗██╔════╝██╔══██╗██║  ╚██╗ ██╔╝██╔══██╗██╔════╝██╔════╝
+██║   ██║██║   ██║██║     ██╔██╗ ██║█████╗██████╔╝██║   ██║██║     ███████║██║   ╚████╔╝ ██████╔╝███████╗█████╗
+╚██╗ ██╔╝██║   ██║██║     ██║╚██╗██║╚════╝██╔═══╝ ██║   ██║██║     ██╔══██║██║    ╚██╔╝  ██╔═══╝ ╚════██║██╔══╝
+ ╚████╔╝ ╚██████╔╝███████╗██║ ╚████║      ██║     ╚██████╔╝╚██████╗██║  ██║███████╗██║   ██║     ███████║███████╗
+  ╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═══╝      ╚═╝      ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝     ╚══════╝╚══════╝</pre>
+    <h1 class="title"><span class="now">N O W</span> <span class="dim">// everything is on fire. this is fine.</span></h1>
+    <p class="motd dim">
+      $ cat /var/log/internet.log | grep -iE 'pwned|0day|oops' &nbsp;·&nbsp;
+      <span id="sync">booting…</span> &nbsp;·&nbsp; next scrape in <span id="countdown">--:--</span>
+      &nbsp;·&nbsp; <button id="phosphor" class="link" type="button" title="toggle phosphor [p]">[p]hosphor</button>
+    </p>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Headline numbers"></section>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Feeds"></nav>
+
+  <div class="prompt">
+    <label for="grep"><span class="ps1">root@vulnpocalypse</span>:<span class="path">~</span># grep -i</label>
+    <input id="grep" type="search" autocomplete="off" spellcheck="false" placeholder="vendor, CVE, company…  [/]" maxlength="80">
+    <span class="dim" id="matches"></span>
+  </div>
+
+  <section id="list" class="list" role="tabpanel" aria-live="polite">
+    <p class="dim boot">[ .... ] waiting for the first scrape<span class="cursor">█</span></p>
+  </section>
+
+  <footer>
+    <pre class="sources" id="sources"></pre>
+    <p class="dim">
+      keys: [1-8] feed · [/] grep · [p] phosphor · [esc] clear &nbsp;|&nbsp;
+      read-only aggregator of public sources; every row links to its origin. no tracking, no cookies, no warranty.
+    </p>
+  </footer>
+</main>
+<noscript><p class="noscript">This terminal needs JavaScript. Raw feed: <a href="feed.json">/api/feed</a></p></noscript>
+<script src="app.js" defer></script>
+</body>
+</html>

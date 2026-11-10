@@ -1,0 +1,145 @@
+/* VULN-POCALYPSE NOW — phosphor terminal. No fonts, no frameworks, no images. */
+
+:root {
+  --bg: #050805;
+  --fg: #33ff66;
+  --fg-dim: #1f9c40;
+  --fg-faint: #0f4a20;
+  --glow: rgba(51, 255, 102, 0.35);
+  --crit: #ff3b3b;
+  --high: #ff9f1a;
+  --med: #ffe14d;
+  --low: var(--fg-dim);
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Fira Code", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+:root[data-phosphor="amber"] {
+  --bg: #080600;
+  --fg: #ffb000;
+  --fg-dim: #a86f00;
+  --fg-faint: #4d3300;
+  --glow: rgba(255, 176, 0, 0.35);
+  --high: #ff7a1a;
+  --med: #ffe14d;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 var(--mono);
+  text-shadow: 0 0 6px var(--glow);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scanlines + vignette. Purely decorative, never intercepts input. */
+.crt {
+  position: fixed; inset: 0; pointer-events: none; z-index: 10;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.22) 2px 3px),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+.term { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+
+a { color: inherit; text-decoration: none; }
+a:hover, a:focus-visible { background: var(--fg); color: var(--bg); text-shadow: none; outline: none; }
+.dim { color: var(--fg-dim); }
+
+/* ---- header ---- */
+.banner {
+  margin: 0; overflow: hidden; line-height: 1.15; white-space: pre;
+  font-family: var(--mono);
+  font-size: clamp(4.5px, 1.36vw, 13px);
+  color: var(--fg);
+  text-shadow: 0 0 3px var(--glow);
+}
+.title { margin: 6px 0 4px; font-size: 15px; font-weight: 400; }
+.now { color: var(--crit); font-weight: 700; text-shadow: 0 0 8px rgba(255, 59, 59, 0.6); }
+.motd { margin: 0 0 16px; font-size: 13px; overflow-wrap: anywhere; }
+
+button.link {
+  font: inherit; color: var(--fg); background: none; border: 0; padding: 0; cursor: pointer; text-shadow: inherit;
+}
+button.link:hover, button.link:focus-visible { background: var(--fg); color: var(--bg); text-shadow: none; outline: none; }
+
+/* ---- stat tiles ---- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.stat { border: 1px solid var(--fg-faint); padding: 8px 10px; min-width: 0; }
+.stat::before { content: "┌─ " attr(data-label); display: block; color: var(--fg-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat b { display: block; font-size: 26px; line-height: 1.25; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat small { color: var(--fg-dim); font-size: 11px; }
+.stat.hot b { color: var(--crit); text-shadow: 0 0 8px rgba(255, 59, 59, 0.5); }
+
+/* ---- tabs ---- */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px 14px; border-bottom: 1px dashed var(--fg-faint); padding-bottom: 8px; }
+.tab {
+  font: inherit; color: var(--fg-dim); background: none; border: 0; padding: 2px 4px; cursor: pointer; text-shadow: inherit;
+}
+.tab:hover, .tab:focus-visible { color: var(--fg); outline: 1px dotted var(--fg-dim); }
+.tab[aria-selected="true"] { background: var(--fg); color: var(--bg); text-shadow: none; }
+.tab .n { opacity: 0.7; }
+.tab.nohit { opacity: 0.35; }
+
+/* ---- prompt ---- */
+.prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 12px 0; }
+.prompt label { white-space: nowrap; }
+.ps1 { color: var(--fg); font-weight: 700; }
+.path { color: var(--fg-dim); }
+#grep {
+  flex: 1 1 200px; min-width: 0;
+  font: inherit; color: var(--fg); background: transparent; text-shadow: inherit;
+  border: 0; border-bottom: 1px solid var(--fg-faint); padding: 2px 0; caret-color: var(--fg);
+}
+#grep:focus { outline: none; border-bottom-color: var(--fg); }
+#grep::placeholder { color: var(--fg-faint); }
+#grep::-webkit-search-cancel-button { display: none; }
+
+/* ---- rows ---- */
+.list { min-height: 40vh; }
+.row {
+  display: grid; grid-template-columns: 96px 170px minmax(0, 1fr); column-gap: 14px;
+  padding: 7px 0; border-bottom: 1px dotted var(--fg-faint);
+}
+.row:hover { background: rgba(127, 255, 127, 0.04); }
+.date { color: var(--fg-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ref { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+.body { min-width: 0; overflow-wrap: anywhere; }
+.headline { font-weight: 700; }
+.summary { color: var(--fg-dim); font-size: 13px; margin-top: 1px; }
+.meta { color: var(--fg-dim); font-size: 12px; margin-top: 2px; display: flex; flex-wrap: wrap; gap: 0 8px; }
+.meta > * { min-width: 0; }
+.tag { white-space: nowrap; }
+.tag::before { content: "["; } .tag::after { content: "]"; }
+
+.sev-critical .ref, .tag.t-RANSOMWARE, .tag.t-BREACH, .tag.t-EPSS { color: var(--crit); text-shadow: 0 0 6px rgba(255, 59, 59, 0.45); }
+.sev-high .ref, .tag.t-EXPLOITED, .tag.t-EXPLOIT, .tag.t-CLAIMED { color: var(--high); text-shadow: 0 0 6px rgba(255, 159, 26, 0.4); }
+.sev-medium .ref { color: var(--med); text-shadow: none; }
+.sev-low .ref { color: var(--low); }
+
+.boot, .empty { padding: 28px 0; }
+.cursor { animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.more { display: block; margin: 14px 0; }
+
+/* ---- footer ---- */
+footer { margin-top: 28px; border-top: 1px dashed var(--fg-faint); padding-top: 12px; font-size: 12px; }
+.sources { margin: 0 0 10px; font: inherit; white-space: pre-wrap; }
+.ok { color: var(--fg); } .fail { color: var(--crit); } .wait { color: var(--med); }
+.noscript { padding: 16px; }
+
+@media (max-width: 720px) {
+  body { font-size: 13px; }
+  .row { grid-template-columns: 1fr; row-gap: 1px; }
+  .row .date { order: 2; font-size: 11px; }
+  .row .ref { order: 1; }
+  .row .body { order: 3; }
+  .stat b { font-size: 21px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+}
