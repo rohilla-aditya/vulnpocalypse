@@ -5,7 +5,11 @@ name: pages
 
 on:
   schedule:
-    - cron: "17 * * * *"   # hourly, off the top of the hour where Actions is busiest
+    # GitHub starts scheduled workflows late and silently drops many of them, so
+    # one slot per hour gave a scrape every 4-9 hours. Four slots an hour, with
+    # the freshness check below skipping any that land within 50 minutes of the
+    # last scrape, keeps the real cadence close to hourly.
+    - cron: "7,22,37,52 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
@@ -37,12 +41,25 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
       # Last good scrape, so a source that is down this hour keeps its rows.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: .cache
           key: vuln-pocalypse-feed-${{ github.run_id }}
           restore-keys: vuln-pocalypse-feed-
+      - id: fresh
+        name: Skip scheduled runs that follow a recent scrape
+        if: github.event_name == 'schedule'
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, time
+          try:
+              age = time.time() - json.load(open(".cache/feed.json"))["generated_at"]
+          except Exception:
+              age = 1e9
+          print("skip=true" if age < 50 * 60 else "skip=false")
+          PY
       - name: Scrape and build
+        if: steps.fresh.outputs.skip != 'true'
         env:
           PUBLIC_URL: ${{ steps.pages.outputs.base_url }}
           VULN_CACHE_FILE: .cache/feed.json
@@ -52,8 +69,15 @@ jobs:
         run: |
           mkdir -p .cache
           python -m app.build dist
+      - uses: actions/cache/save@v4
+        if: steps.fresh.outputs.skip != 'true'
+        with:
+          path: .cache
+          key: vuln-pocalypse-feed-${{ github.run_id }}
       - uses: actions/upload-pages-artifact@v3
+        if: steps.fresh.outputs.skip != 'true'
         with:
           path: dist
       - id: deploy
+        if: steps.fresh.outputs.skip != 'true'
         uses: actions/deploy-pages@v4
