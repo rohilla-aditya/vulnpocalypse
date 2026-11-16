@@ -86,8 +86,10 @@ as `feed.json`. One-time setup: **repo Settings → Pages → Source: GitHub
 Actions**, then run the workflow once from the Actions tab. The site lands at
 `https://rohilla-aditya.github.io/vulnpocalypse/`.
 
-- GitHub may start scheduled runs a few minutes late, and pauses schedules on
-  repos with no activity for 60 days.
+- GitHub starts scheduled workflows late and drops many of them, so the
+  workflow is scheduled four times an hour and skips any run that lands
+  within 50 minutes of the last scrape. GitHub also pauses schedules on repos
+  with no activity for 60 days.
 - The last good scrape is kept in the Actions cache, so a source that is down
   for an hour keeps its previous rows.
 
