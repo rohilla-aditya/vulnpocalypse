@@ -129,7 +129,8 @@
     const items = q ? tab.items.filter((i) => hay(i).includes(q)) : tab.items;
     // grep searches every feed: the count per tab shows where the hits are.
     const total = q ? d.tabs.reduce((n, t) => n + t.items.filter((i) => hay(i).includes(q)).length, 0) : 0;
-    $("matches").textContent = q ? `${items.length} here / ${total} in all feeds` : "";
+    const order = tab.order === "criticality" ? "sorted: most critical first" : "sorted: newest first";
+    $("matches").textContent = q ? `${items.length} here / ${total} in all feeds · ${order}` : order;
     document.querySelectorAll("#tabs .tab").forEach((b, idx) => {
       const t = d.tabs[idx];
       const n = q ? t.items.filter((i) => hay(i).includes(q)).length : t.items.length;

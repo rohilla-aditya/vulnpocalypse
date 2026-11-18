@@ -34,6 +34,32 @@ TABS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 # Sources whose rows carry a CVE id worth annotating with its EPSS score.
 EPSS_SOURCES = ("kev", "nvd", "ghsa")
+# Tabs listed most critical first instead of newest first.
+CRITICALITY_TABS = ("exploited", "cves", "advisories", "exploits")
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+_FIX_RANK = {"open": 0, "unknown": 1, "patched": 2}
+
+
+def _cvss(item: dict) -> float:
+    for tag in item.get("tags", []):
+        if tag.startswith("CVSS "):
+            try:
+                return float(tag[5:])
+            except ValueError:
+                pass
+    return 0.0
+
+
+def criticality_key(item: dict) -> tuple:
+    """Severity, then no-patch first, then CVSS, exploit likelihood, ransomware use, newest."""
+    return (
+        _SEV_RANK.get(item.get("sev", ""), 4),
+        _FIX_RANK.get(item.get("fix", ""), 1),
+        -_cvss(item),
+        -float(item.get("epss") or 0),
+        0 if "RANSOMWARE" in item.get("tags", []) else 1,
+        -int(item.get("ts") or 0),
+    )
 # Where incident headlines come from.
 INCIDENT_SOURCES = ("wire", "hn", "forums", "fedi")
 # CVE-record lookups per scrape for exploited CVEs whose patch status CISA's
@@ -178,8 +204,11 @@ class Feed:
             tabs = []
             for key, label, keys in TABS:
                 items = [i for k in keys for i in self._state[k]["items"]]
-                items.sort(key=lambda i: i.get("ts", 0), reverse=True)
-                tabs.append({"key": key, "label": label, "items": items})
+                if key in CRITICALITY_TABS:
+                    items.sort(key=criticality_key)
+                else:
+                    items.sort(key=lambda i: i.get("ts", 0), reverse=True)
+                tabs.append({"key": key, "label": label, "items": items, "order": "criticality" if key in CRITICALITY_TABS else "newest"})
             tabs.append({"key": "attacks", "label": "ATTACKS IN THE NEWS", "items": self._incidents()})
             vulns = [i for k in EPSS_SOURCES for i in self._state[k]["items"]]
             stats["fix_open"] = sum(1 for i in vulns if i.get("fix") == "open")

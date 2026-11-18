@@ -297,3 +297,32 @@ def test_nvd_patch_status_uses_reference_tags(monkeypatch):
     nvd["vulnerabilities"][0]["cve"]["references"] = [{"url": "https://x.example/fix", "tags": ["Patch", "Vendor Advisory"]}]
     monkeypatch.setitem(globals(), "NVD", nvd)
     assert run(sources.fetch_nvd(client()))["items"][0]["fix"] == "patched"
+
+
+def test_vulnerability_tabs_are_sorted_by_criticality():
+    from app.feed import criticality_key
+
+    rows = [
+        {"id": "a", "sev": "high", "fix": "patched", "tags": ["CVSS 8.8"], "ts": 300},
+        {"id": "b", "sev": "critical", "fix": "patched", "tags": ["CVSS 9.1"], "ts": 100},
+        {"id": "c", "sev": "critical", "fix": "patched", "tags": ["CVSS 9.8"], "ts": 50},
+        {"id": "d", "sev": "critical", "fix": "open", "tags": ["CVSS 9.0"], "ts": 10},
+        {"id": "e", "sev": "high", "fix": "patched", "tags": ["CVSS 8.8"], "epss": 0.9, "ts": 20},
+        {"id": "f", "sev": "medium", "fix": "unknown", "tags": [], "ts": 999},
+    ]
+    assert [r["id"] for r in sorted(rows, key=criticality_key)] == ["d", "c", "b", "e", "a", "f"]
+
+
+def test_payload_orders_vuln_tabs_by_criticality_and_news_by_date(tmp_path, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cache_file", tmp_path / "cache.json")
+    f = Feed()
+    run(f.refresh(client()))
+    tabs = {t["key"]: t for t in f.payload()["tabs"]}
+    assert tabs["exploited"]["order"] == "criticality" and tabs["wire"]["order"] == "newest"
+    assert [i["ref"] for i in tabs["exploited"]["items"]] == ["CVE-2026-0001", "CVE-2019-0002"]
+    sevs = [i["sev"] for i in tabs["cves"]["items"]]
+    assert sevs == sorted(sevs, key=lambda s: ["critical", "high", "medium", "low"].index(s))
+    ts = [i["ts"] for i in tabs["wire"]["items"]]
+    assert ts == sorted(ts, reverse=True)
