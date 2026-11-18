@@ -35,6 +35,10 @@ Every row in the two vulnerability tabs carries one of three labels:
 | `NO PATCH` | The source says there is no fix: unpatched, end-of-life, won't fix. | Explicit wording, or a GitHub advisory with no patched version |
 | `PATCH UNKNOWN` | The data does not say either way. Common for CVEs published in the last few days. | Nothing above matched |
 
+The four vulnerability tabs (1-4) list the most critical first: severity,
+then no patch before patched, then CVSS score, EPSS, ransomware use, and
+finally date. The news and breach tabs are newest first.
+
 CVE rows are annotated with their EPSS score (FIRST.org's probability of
 exploitation in the next 30 days). The full lists live at the top of
 `app/sources.py`.
